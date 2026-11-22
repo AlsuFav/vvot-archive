@@ -1,0 +1,157 @@
+openapi: 3.0.3
+info:
+  title: API архивирования файлов
+  version: 1.0.0
+
+x-yc-apigateway:
+  service_account_id: '${gateway_account_id}'
+
+paths:
+  /tasks:
+    post:
+      operationId: createTask
+      summary: Поставить задание в очередь
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      x-yc-apigateway-validator:
+        validateRequestBody: true
+      x-yc-apigateway-integration:
+        type: cloud_ymq
+        action: SendMessage
+        # В очередь попадает JSON задания из тела запроса.
+        payload_format_type: body
+        folder_id: '${folder_id}'
+        queue_url: '${queue_url}'
+      responses:
+        '200':
+          description: Успешный ответ интеграции преобразуется в 202
+          x-yc-status-mapping: 202
+        '202':
+          description: Задание принято в очередь
+        '400':
+          description: Некорректное задание
+
+  /archives:
+    get:
+      operationId: listArchives
+      summary: Получить список архивов
+      x-yc-apigateway-integration:
+        type: cloud_ydb
+        action: Scan
+        database: '${database_path}'
+        table_name: archives
+      responses:
+        '200':
+          description: Список записей об архивах
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Archive'
+
+  /archives/{key}:
+    get:
+      operationId: getArchive
+      summary: Получить информацию об архиве
+      parameters:
+        - $ref: '#/components/parameters/ArchiveKey'
+      x-yc-apigateway-validator:
+        validateRequestParameters: true
+        validateResponseBody: true
+        validationErrorHandler:
+          statusCode: 404
+          x-yc-apigateway-integration:
+            type: dummy
+            http_code: 200
+            http_headers:
+              Content-Type: application/json
+            content:
+              application/json: '{"error":"archive not found"}'
+      x-yc-apigateway-integration:
+        type: cloud_ydb
+        action: GetItem
+        database: '${database_path}'
+        table_name: archives
+        key: '{"key":"{key}"}'
+      responses:
+        '200':
+          description: Запись об архиве
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Archive'
+        '404':
+          description: Запись отсутствует
+        default:
+          description: Ошибка интеграции
+
+  /download/{key}:
+    get:
+      operationId: downloadArchive
+      summary: Скачать ZIP-архив
+      parameters:
+        - $ref: '#/components/parameters/ArchiveKey'
+      x-yc-apigateway-validator:
+        validateRequestParameters: true
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: '${bucket_name}'
+        object: '{key}'
+      responses:
+        '200':
+          description: ZIP-архив
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Объект отсутствует
+
+components:
+  parameters:
+    ArchiveKey:
+      name: key
+      in: path
+      required: true
+      description: Ключ архивного объекта
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._-]{1,255}$'
+  schemas:
+    Task:
+      type: object
+      required: [name, url]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: '^[^/\\:\x00-\x1f\x7f]+$'
+          not:
+            enum: ['.', '..']
+          example: document.pdf
+        url:
+          type: string
+          format: uri
+          maxLength: 4096
+          pattern: '^https?://[^/?#@\s]+([/?#][^\s]*)?$'
+          example: https://example.com/document.pdf
+    Archive:
+      type: object
+      required: [name, url, key]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+        key:
+          type: string
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.zip$'

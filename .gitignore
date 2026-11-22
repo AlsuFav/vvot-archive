@@ -1,0 +1,13 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+*.tfplan
+crash.log
+crash.*.log
+.archive-function.zip
+__pycache__/
+*.pyc
+.DS_Store
+/README_MINE.md
